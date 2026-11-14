@@ -748,3 +748,45 @@ model LearnerProgressItem {
   skillsImproved      Int       @default(0)
   lastUpdated         DateTime  @default(now())
 }
+
+model Conversation {
+  id        String                @id @default(uuid())
+  userId    String
+  title     String                @default("New Conversation")
+  agentType String                @default("AI_MENTOR")
+  createdAt DateTime              @default(now())
+  updatedAt DateTime              @updatedAt
+  messages  ConversationMessage[]
+
+  @@index([userId])
+}
+
+model ConversationMessage {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         String
+  role           String       // "user" | "model" | "assistant" | "system"
+  content        String
+  intent         String?      // e.g. "GENERAL_CONVERSATION", "TECHNICAL_ASSISTANCE", etc.
+  metadata       String?      @default("{}") // JSON string for suggestions, sources, roadmap, scores
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId])
+  @@index([userId])
+}
+
+model LearnerAiMemory {
+  id            String   @id @default(uuid())
+  userId        String
+  memoryType    String   // "GOAL", "PROJECT", "PREFERENCE", "CHALLENGE", "FACT"
+  memoryKey     String?
+  memoryContent String
+  source        String   @default("CHAT")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId])
+  @@index([memoryType])
+}
+

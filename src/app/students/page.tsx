@@ -45,7 +45,7 @@ export default function StudentsLanding() {
 
         <div className="text-center">
           <Link href="/login" className="px-6 py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg shadow-blue-500/10">
-            Sign In with Mobile OTP
+            Sign In to GoWithFlow
           </Link>
         </div>
       </div>

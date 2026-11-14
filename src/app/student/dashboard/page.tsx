@@ -119,11 +119,16 @@ export default function StudentDashboard() {
 
   // Coordinated Feature 1: Chat Agent State
   const [chatOpen, setChatOpen] = useState(false);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [mentorSubTab, setMentorSubTab] = useState<'CHAT' | 'RECOMMENDATIONS'>('CHAT');
   const [chatMessages, setChatMessages] = useState<Array<{
     id: string;
     sender: 'USER' | 'AI';
     text: string;
-    sources?: Array<{ title: string; subject: string; category: string; fileUrl?: string }>;
+    intent?: string;
+    agent?: string;
+    suggestions?: string[];
+    sources?: Array<{ title: string; subject: string; category?: string; fileUrl?: string }>;
     timestamp: string;
     isError?: boolean;
   }>>([]);
@@ -166,44 +171,94 @@ export default function StudentDashboard() {
   };
 
   const renderFormattedMessage = (content: string) => {
-    const lines = (content || '').split('\n');
+    const codeBlockRegex = /```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g;
+    const segments: Array<{ type: 'text' | 'code'; content: string; language?: string }> = [];
+    let lastIndex = 0;
+    let match;
+
+    while ((match = codeBlockRegex.exec(content || '')) !== null) {
+      if (match.index > lastIndex) {
+        segments.push({ type: 'text', content: content.slice(lastIndex, match.index) });
+      }
+      segments.push({ type: 'code', language: match[1] || 'code', content: match[2].trim() });
+      lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < (content || '').length) {
+      segments.push({ type: 'text', content: (content || '').slice(lastIndex) });
+    }
+
     return (
-      <div className="space-y-1.5 text-xs font-normal">
-        {lines.map((line, lIdx) => {
-          const trimmed = line.trim();
-          if (!trimmed) return <div key={lIdx} className="h-1" />;
-
-          if (trimmed.startsWith('### ')) {
-            return <h4 key={lIdx} className="font-serif font-black text-xs text-[#252820] mt-1.5 mb-0.5">{trimmed.replace(/^###\s+/, '')}</h4>;
-          }
-          if (trimmed.startsWith('## ')) {
-            return <h3 key={lIdx} className="font-serif font-black text-sm text-[#252820] mt-2 mb-1">{trimmed.replace(/^##\s+/, '')}</h3>;
-          }
-
-          const isBullet = trimmed.startsWith('- ') || trimmed.startsWith('* ') || trimmed.startsWith('• ');
-          const textToRender = isBullet ? trimmed.replace(/^[-*•]\s+/, '') : trimmed;
-          const parts = textToRender.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
-
-          const renderedLine = parts.map((part, pIdx) => {
-            if (part.startsWith('**') && part.endsWith('**')) {
-              return <strong key={pIdx} className="font-black text-[#252820]">{part.slice(2, -2)}</strong>;
-            }
-            if (part.startsWith('`') && part.endsWith('`')) {
-              return <code key={pIdx} className="px-1 py-0.5 bg-[#E5E1D8]/60 text-[#252820] rounded font-mono text-[11px]">{part.slice(1, -1)}</code>;
-            }
-            return part;
-          });
-
-          if (isBullet) {
+      <div className="space-y-2 text-xs font-normal">
+        {segments.map((seg, sIdx) => {
+          if (seg.type === 'code') {
             return (
-              <div key={lIdx} className="flex items-start gap-1.5 pl-1">
-                <span className="text-[#426B52] font-black text-xs mt-0.5">•</span>
-                <span className="flex-1 leading-relaxed">{renderedLine}</span>
+              <div key={sIdx} className="my-2 rounded-xl bg-[#1E201B] border border-[#34382D] overflow-hidden text-left shadow-xs">
+                <div className="flex items-center justify-between px-3 py-1.5 bg-[#141612] text-[10px] text-[#A8B99A] font-mono border-b border-[#34382D]">
+                  <span className="uppercase font-bold tracking-wider">{seg.language || 'code'}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+                        navigator.clipboard.writeText(seg.content);
+                      }
+                    }}
+                    className="hover:text-white transition-colors cursor-pointer"
+                    title="Copy code"
+                  >
+                    Copy
+                  </button>
+                </div>
+                <pre className="p-3 text-[11px] font-mono text-[#E5E1D8] overflow-x-auto whitespace-pre leading-relaxed">
+                  {seg.content}
+                </pre>
               </div>
             );
           }
 
-          return <p key={lIdx} className="leading-relaxed">{renderedLine}</p>;
+          const lines = seg.content.split('\n');
+          return (
+            <div key={sIdx} className="space-y-1.5">
+              {lines.map((line, lIdx) => {
+                const trimmed = line.trim();
+                if (!trimmed) return <div key={lIdx} className="h-0.5" />;
+
+                if (trimmed.startsWith('#### ')) {
+                  return <h5 key={lIdx} className="font-serif font-black text-xs text-[#252820] mt-1.5 mb-0.5">{trimmed.replace(/^####\s+/, '')}</h5>;
+                }
+                if (trimmed.startsWith('### ')) {
+                  return <h4 key={lIdx} className="font-serif font-black text-xs text-[#252820] mt-2 mb-1">{trimmed.replace(/^###\s+/, '')}</h4>;
+                }
+                if (trimmed.startsWith('## ')) {
+                  return <h3 key={lIdx} className="font-serif font-black text-sm text-[#252820] mt-2.5 mb-1">{trimmed.replace(/^##\s+/, '')}</h3>;
+                }
+
+                const isBullet = trimmed.startsWith('- ') || trimmed.startsWith('* ') || trimmed.startsWith('• ');
+                const textToRender = isBullet ? trimmed.replace(/^[-*•]\s+/, '') : trimmed;
+                const parts = textToRender.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
+
+                const renderedLine = parts.map((part, pIdx) => {
+                  if (part.startsWith('**') && part.endsWith('**')) {
+                    return <strong key={pIdx} className="font-black text-[#252820]">{part.slice(2, -2)}</strong>;
+                  }
+                  if (part.startsWith('`') && part.endsWith('`')) {
+                    return <code key={pIdx} className="px-1 py-0.5 bg-[#E5E1D8]/60 text-[#252820] rounded font-mono text-[11px]">{part.slice(1, -1)}</code>;
+                  }
+                  return part;
+                });
+
+                if (isBullet) {
+                  return (
+                    <div key={lIdx} className="flex items-start gap-1.5 pl-1">
+                      <span className="text-[#426B52] font-black text-xs mt-0.5">•</span>
+                      <span className="flex-1 leading-relaxed">{renderedLine}</span>
+                    </div>
+                  );
+                }
+
+                return <p key={lIdx} className="leading-relaxed">{renderedLine}</p>;
+              })}
+            </div>
+          );
         })}
       </div>
     );
@@ -261,7 +316,7 @@ export default function StudentDashboard() {
   const loadAllDashboardData = async () => {
     setLoading(true);
     try {
-      const [overviewRes, mRes, aRes, matRes, asRes, connRes, mentorRes, trackerRes] = await Promise.all([
+      const [overviewRes, mRes, aRes, matRes, asRes, connRes, mentorRes, trackerRes, chatRes] = await Promise.all([
         fetch('/api/skillpath/overview').then(r => r.json()).catch(() => ({})),
         fetch('/api/student/dashboard').then(r => r.json()).catch(() => ({})),
         fetch('/api/student/attendance').then(r => r.json()).catch(() => ({})),
@@ -269,7 +324,8 @@ export default function StudentDashboard() {
         fetch('/api/student/assignments').then(r => r.json()).catch(() => ({})),
         fetch('/api/student/connections').then(r => r.json()).catch(() => ({})),
         fetch('/api/student/mentor').then(r => r.json()).catch(() => ({})),
-        fetch('/api/student/tracker').then(r => r.json()).catch(() => ({}))
+        fetch('/api/student/tracker').then(r => r.json()).catch(() => ({})),
+        chatService.getConversation().catch(() => ({}))
       ]);
 
       if (overviewRes.success) {
@@ -300,6 +356,20 @@ export default function StudentDashboard() {
       }
       if (trackerRes.success && trackerRes.data) {
         setTrackerData(trackerRes.data);
+      }
+      if (chatRes?.success && chatRes.data?.conversation) {
+        setActiveConversationId(chatRes.data.conversation.id);
+        if (Array.isArray(chatRes.data.conversation.messages) && chatRes.data.conversation.messages.length > 0) {
+          setChatMessages(chatRes.data.conversation.messages.map((m: any) => ({
+            id: m.id,
+            sender: m.role === 'user' ? 'USER' : 'AI',
+            text: m.content,
+            intent: m.intent,
+            suggestions: m.suggestions || [],
+            sources: m.sources || [],
+            timestamp: new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          })));
+        }
       }
     } catch (err) {
       console.error(err);
@@ -523,14 +593,18 @@ export default function StudentDashboard() {
     }));
 
     try {
-      const res = await chatService.askQuestion(userMsg.text, historyPayload);
+      const res = await chatService.askQuestion(userMsg.text, historyPayload, activeConversationId || undefined);
       if (res.success && res.data) {
+        if (res.data.conversationId) setActiveConversationId(res.data.conversationId);
         setChatMessages(prev => [
           ...prev,
           {
-            id: `msg-${Date.now() + 1}`,
+            id: res.data.messageId || `msg-${Date.now() + 1}`,
             sender: 'AI',
             text: res.data.reply,
+            intent: res.data.intent,
+            agent: res.data.agent,
+            suggestions: res.data.suggestions || [],
             sources: res.data.sources || [],
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
           }
@@ -539,14 +613,14 @@ export default function StudentDashboard() {
         throw new Error(res.error?.message || 'Chat service response error');
       }
     } catch {
-      setChatError('Unable to fetch response from Course Assistant. Please check connectivity.');
+      setChatError('Unable to fetch response from AI Mentor. Please click retry below.');
       setLastFailedPrompt(userMsg.text);
       setChatMessages(prev => [
         ...prev,
         {
           id: `msg-${Date.now() + 1}`,
           sender: 'AI',
-          text: 'I could not process this question against the course repository right now. Please click retry below.',
+          text: '### Temporary Connection Interruption\n\nI was unable to complete this query right now. Please check your network connection and click retry below.',
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           isError: true
         }
@@ -562,7 +636,10 @@ export default function StudentDashboard() {
     }
   };
 
-  const handleClearChat = () => {
+  const handleClearChat = async () => {
+    if (activeConversationId) {
+      await chatService.clearConversation(activeConversationId).catch(() => {});
+    }
     setChatMessages([]);
     setChatError(null);
     setLastFailedPrompt(null);
@@ -1987,163 +2064,388 @@ export default function StudentDashboard() {
               </div>
             </div>
 
-            {/* AI Attribution Disclaimer */}
-            <div className="p-4 bg-[#FFFEFC] border border-[#E5E1D8] rounded-2xl flex items-start gap-3 shadow-sm">
-              <Info className="w-5 h-5 text-[#426B52] shrink-0 mt-0.5" />
-              <div className="text-xs text-[#252820]/90 leading-relaxed">
-                <strong className="font-bold text-[#252820]">AI-Generated Guidance</strong>: Recommendations are synthesized by GoWithFlow based on your enrolled coursework, roadmap milestones, and self-reported target hours. This advice is designed to assist independent study planning and does not represent official faculty evaluations.
-              </div>
+            {/* Sub-tab Switcher: Conversational Mentor vs Action Guidance */}
+            <div className="flex border-b border-[#E5E1D8] gap-6">
+              <button
+                type="button"
+                onClick={() => setMentorSubTab('CHAT')}
+                className={`pb-3 text-xs font-bold flex items-center gap-2 border-b-2 transition-colors cursor-pointer ${
+                  mentorSubTab === 'CHAT'
+                    ? 'border-[#426B52] text-[#426B52]'
+                    : 'border-transparent text-[#72766B] hover:text-[#252820]'
+                }`}
+              >
+                <MessageSquare className="w-4 h-4" />
+                <span>Conversational AI Mentor</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] bg-[#426B52]/10 text-[#426B52] font-semibold">Active</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMentorSubTab('RECOMMENDATIONS')}
+                className={`pb-3 text-xs font-bold flex items-center gap-2 border-b-2 transition-colors cursor-pointer ${
+                  mentorSubTab === 'RECOMMENDATIONS'
+                    ? 'border-[#426B52] text-[#426B52]'
+                    : 'border-transparent text-[#72766B] hover:text-[#252820]'
+                }`}
+              >
+                <Sparkles className="w-4 h-4" />
+                <span>Weekly Action Guidance</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] bg-[#E5E1D8] text-[#252820] font-semibold">{mentorRecs.length}</span>
+              </button>
             </div>
 
-            {/* Category Filter Pills & Dismissed Toggle */}
-            <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-              <div className="flex flex-wrap gap-1.5">
-                {[
-                  { id: 'ALL', label: 'All Guidance' },
-                  { id: 'GOAL', label: 'Goal Setting' },
-                  { id: 'STUDY_PLAN', label: 'Study Sessions' },
-                  { id: 'REFLECTION', label: 'Progress Reflection' },
-                  { id: 'NEXT_STEP', label: 'Next Steps' }
-                ].map(cat => (
-                  <button
-                    key={cat.id}
-                    onClick={() => setMentorFilterCategory(cat.id)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${
-                      mentorFilterCategory === cat.id
-                        ? 'bg-[#426B52] text-white shadow-sm'
-                        : 'bg-[#FFFEFC] border border-[#E5E1D8] text-[#72766B] hover:text-[#252820] hover:bg-[#F6F4EF]'
-                    }`}
-                  >
-                    {cat.label}
-                  </button>
-                ))}
-              </div>
+            {/* VIEW 1: CONVERSATIONAL AI MENTOR */}
+            {mentorSubTab === 'CHAT' && (
+              <div className="bg-[#FFFEFC] border border-[#E5E1D8] rounded-3xl p-6 shadow-sm space-y-4">
+                {/* Chat Top Banner */}
+                <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 pb-4 border-b border-[#E5E1D8]">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-[#426B52] flex items-center justify-center text-white shadow-sm">
+                      <Sparkles className="w-5 h-5 text-[#A8B99A]" />
+                    </div>
+                    <div>
+                      <h3 className="font-extrabold text-sm text-[#252820]">
+                        GoWithFlow AI Mentor
+                      </h3>
+                      <p className="text-xs text-[#72766B]">
+                        Personalized for <strong className="text-[#252820]">{skillPathData?.currentCareerGoal?.primaryRole || 'Full Stack Developer'}</strong>
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {chatMessages.length > 0 && (
+                      <button
+                        onClick={handleClearChat}
+                        className="px-3 py-1.5 text-xs font-bold text-[#72766B] hover:text-[#C77952] border border-[#E5E1D8] hover:border-[#C77952]/40 rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
+                        title="Clear conversation"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>Clear Chat</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
 
-              {dismissedRecIds.length > 0 && (
-                <button
-                  onClick={() => setShowDismissed(!showDismissed)}
-                  className="text-xs font-semibold text-[#72766B] hover:text-[#252820] flex items-center gap-1"
-                >
-                  <span>{showDismissed ? 'Hide dismissed' : `Show dismissed (${dismissedRecIds.length})`}</span>
-                </button>
-              )}
-            </div>
-
-            {/* Recommendations List */}
-            <div className="space-y-4">
-              {mentorRecs
-                .filter(rec => {
-                  if (mentorFilterCategory !== 'ALL' && rec.category !== mentorFilterCategory) return false;
-                  if (!showDismissed && dismissedRecIds.includes(rec.id)) return false;
-                  return true;
-                })
-                .map(rec => {
-                  const isDismissed = dismissedRecIds.includes(rec.id);
-                  const isAccepted = acceptedRecIds.includes(rec.id);
-
-                  const categoryColors: Record<string, { bg: string; text: string; border: string }> = {
-                    GOAL: { bg: 'bg-[#C77952]/10', text: 'text-[#C77952]', border: 'border-[#C77952]/30' },
-                    STUDY_PLAN: { bg: 'bg-[#426B52]/10', text: 'text-[#426B52]', border: 'border-[#426B52]/30' },
-                    REFLECTION: { bg: 'bg-[#A8B99A]/20', text: 'text-[#426B52]', border: 'border-[#A8B99A]/40' },
-                    NEXT_STEP: { bg: 'bg-[#252820]/10', text: 'text-[#252820]', border: 'border-[#252820]/20' }
-                  };
-                  const color = categoryColors[rec.category] || categoryColors.GOAL;
-
-                  return (
-                    <div
-                      key={rec.id}
-                      className={`bg-[#FFFEFC] border border-[#E5E1D8] rounded-2xl p-6 shadow-sm transition-all ${
-                        isDismissed ? 'opacity-60 bg-[#F6F4EF]' : ''
-                      }`}
-                    >
-                      <div className="flex flex-col sm:flex-row justify-between sm:items-start gap-3">
-                        <div className="space-y-2 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className={`text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full border ${color.bg} ${color.text} ${color.border}`}>
-                              {rec.category.replace('_', ' ')}
-                            </span>
-                            <span className="text-[11px] font-bold text-[#72766B] flex items-center gap-1">
-                              <Clock className="w-3 h-3" /> {rec.timeframe}
-                            </span>
-                            <span className="text-[10px] text-[#A8B99A] font-semibold bg-[#252820] px-2 py-0.5 rounded text-white">
-                              AI Advice
-                            </span>
-                          </div>
-
-                          <h3 className="text-base font-extrabold text-[#252820]">
-                            {rec.title}
-                          </h3>
-
-                          <p className="text-xs text-[#252820]/85 leading-relaxed">
-                            {rec.description}
-                          </p>
-
-                          <div className="pt-2 flex flex-wrap items-center gap-3 text-[11px] text-[#72766B]">
-                            <span>Focus: <strong className="text-[#252820]">{rec.impactTopic}</strong></span>
-                            <span>&bull;</span>
-                            <span>{rec.confidenceNote}</span>
-                          </div>
+                {/* Messages Stream */}
+                <div className="min-h-[380px] max-h-[550px] overflow-y-auto space-y-4 pr-1">
+                  {chatMessages.length === 0 ? (
+                    <div className="space-y-6 py-6 text-center">
+                      <div className="max-w-md mx-auto space-y-2">
+                        <div className="w-12 h-12 rounded-2xl bg-[#F6F4EF] border border-[#E5E1D8] flex items-center justify-center text-[#426B52] mx-auto">
+                          <GraduationCap className="w-6 h-6" />
                         </div>
+                        <h4 className="font-extrabold text-base text-[#252820]">
+                          Hello, {user?.name || 'Learner'}. Ready to make your next move?
+                        </h4>
+                        <p className="text-xs text-[#72766B] leading-relaxed">
+                          I understand your capabilities, logged milestones, and career ambitions. Ask me anything about your learning path, technical concepts, or career strategy.
+                        </p>
+                      </div>
 
-                        {/* Action buttons */}
-                        <div className="flex items-center gap-2 shrink-0 pt-2 sm:pt-0">
-                          {isDismissed ? (
+                      <div className="max-w-2xl mx-auto space-y-2 text-left">
+                        <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#72766B] px-1 block">
+                          Suggested Starting Points:
+                        </span>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {[
+                            'Analyze my current skills and gaps.',
+                            'Explain how to master system design.',
+                            'Give me a portfolio project idea.',
+                            'Evaluate my career readiness score.',
+                            'What should I study this week?',
+                            'How do I prepare for technical interviews?'
+                          ].map((prompt, pIdx) => (
                             <button
-                              onClick={() => handleRestoreRec(rec.id)}
-                              className="px-3 py-1.5 text-xs font-bold text-[#426B52] border border-[#426B52] hover:bg-[#426B52]/10 rounded-xl transition-colors"
+                              key={pIdx}
+                              type="button"
+                              onClick={() => handleSendChatMessage(prompt)}
+                              className="p-3 bg-[#F6F4EF] hover:bg-[#E5E1D8]/50 border border-[#E5E1D8] hover:border-[#426B52] rounded-2xl text-xs font-semibold text-[#252820] transition-colors flex items-center justify-between group cursor-pointer text-left"
                             >
-                              Restore
+                              <span className="truncate pr-2">{prompt}</span>
+                              <ChevronRight className="w-3.5 h-3.5 text-[#72766B] group-hover:text-[#426B52] shrink-0" />
                             </button>
-                          ) : (
-                            <>
-                              <button
-                                onClick={() => handleAcceptRec(rec.id)}
-                                disabled={isAccepted}
-                                className={`px-4 py-2 text-xs font-bold rounded-xl transition-colors ${
-                                  isAccepted
-                                    ? 'bg-[#A8B99A]/30 text-[#426B52] border border-[#A8B99A]'
-                                    : 'bg-[#426B52] hover:bg-[#365843] text-white shadow-sm'
-                                }`}
-                              >
-                                {isAccepted ? 'Added to Study Plan ✓' : rec.suggestedAction || 'Accept into Plan'}
-                              </button>
-                              <button
-                                onClick={() => handleOpenAdjust(rec)}
-                                className="px-3 py-2 border border-[#E5E1D8] hover:bg-[#F6F4EF] text-xs font-bold text-[#252820] rounded-xl transition-colors"
-                              >
-                                Adjust
-                              </button>
-                              <button
-                                onClick={() => handleDismissRec(rec.id)}
-                                className="px-2.5 py-2 border border-[#E5E1D8] hover:bg-[#C77952]/10 text-xs font-bold text-[#72766B] hover:text-[#C77952] rounded-xl transition-colors"
-                                title="Dismiss this guidance"
-                              >
-                                Dismiss
-                              </button>
-                            </>
-                          )}
+                          ))}
                         </div>
                       </div>
                     </div>
-                  );
-                })}
+                  ) : (
+                    chatMessages.map(m => (
+                      <div key={m.id} className={`flex flex-col ${m.sender === 'USER' ? 'items-end' : 'items-start'} space-y-1`}>
+                        <div
+                          className={`p-4 rounded-2xl max-w-[85%] leading-relaxed ${
+                            m.sender === 'USER'
+                              ? 'bg-[#426B52] text-white rounded-tr-xs'
+                              : m.isError
+                              ? 'bg-[#C77952]/10 border border-[#C77952]/40 text-[#252820] rounded-tl-xs'
+                              : 'bg-[#F6F4EF] border border-[#E5E1D8] text-[#252820] rounded-tl-xs shadow-xs'
+                          }`}
+                        >
+                          {m.sender === 'USER' ? (
+                            <div className="whitespace-pre-line text-xs font-normal">
+                              {m.text}
+                            </div>
+                          ) : (
+                            renderFormattedMessage(m.text)
+                          )}
 
-              {mentorRecs.filter(r => !dismissedRecIds.includes(r.id)).length === 0 && (
-                <div className="p-10 bg-[#FFFEFC] border border-[#E5E1D8] rounded-2xl text-center space-y-3">
-                  <CheckCircle2 className="w-10 h-10 text-[#426B52] mx-auto" />
-                  <h4 className="font-extrabold text-[#252820] text-sm">All Current Recommendations Addressed</h4>
-                  <p className="text-xs text-[#72766B] max-w-md mx-auto">
-                    You have reviewed and acted on all recommendations in this cycle. Log more study hours or complete course assignments to generate new guidance.
-                  </p>
-                  <button
-                    onClick={fetchMentorData}
-                    className="px-4 py-2 bg-[#426B52] hover:bg-[#365843] text-white text-xs font-bold rounded-xl transition-colors"
-                  >
-                    Re-Analyze Progress
-                  </button>
+                          {/* Sources */}
+                          {m.sources && m.sources.length > 0 && (
+                            <div className="mt-3 pt-2 border-t border-[#E5E1D8] space-y-1">
+                              <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#72766B] block">
+                                Verified References:
+                              </span>
+                              <div className="flex flex-wrap gap-1.5">
+                                {m.sources.map((src, sIdx) => (
+                                  <span
+                                    key={sIdx}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 bg-[#FFFEFC] border border-[#E5E1D8] rounded-md text-[10px] font-bold text-[#252820]"
+                                  >
+                                    <FileText className="w-3 h-3 text-[#426B52]" />
+                                    <span>{src.title}</span>
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Suggestion Chips */}
+                          {m.suggestions && m.suggestions.length > 0 && (
+                            <div className="mt-3 pt-2 border-t border-[#E5E1D8] space-y-1.5">
+                              <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#72766B] block">
+                                Suggested Follow-Ups:
+                              </span>
+                              <div className="flex flex-wrap gap-1.5">
+                                {m.suggestions.map((sug, sIdx) => (
+                                  <button
+                                    key={sIdx}
+                                    type="button"
+                                    onClick={() => handleSendChatMessage(sug)}
+                                    className="px-2.5 py-1 bg-[#FFFEFC] hover:bg-[#F6F4EF] border border-[#E5E1D8] hover:border-[#426B52] rounded-lg text-[10px] font-semibold text-[#252820] text-left transition-colors flex items-center gap-1 group cursor-pointer"
+                                  >
+                                    <span>{sug}</span>
+                                    <ChevronRight className="w-3 h-3 text-[#72766B] group-hover:text-[#426B52] shrink-0" />
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Error State with Retry Button */}
+                          {m.isError && (
+                            <div className="mt-2 pt-2 border-t border-[#C77952]/30 flex justify-end">
+                              <button
+                                onClick={handleRetryChat}
+                                className="px-3 py-1 bg-[#C77952] hover:bg-[#b06742] text-white rounded-lg text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                              >
+                                <RotateCcw className="w-3 h-3" /> Retry Query
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                        <span className="text-[9px] text-[#72766B] px-1 font-semibold">
+                          {m.timestamp}
+                        </span>
+                      </div>
+                    ))
+                  )}
+
+                  {chatSending && (
+                    <div className="flex items-center gap-2 p-3 bg-[#F6F4EF] border border-[#E5E1D8] rounded-2xl w-fit text-xs text-[#72766B] font-semibold animate-pulse">
+                      <Sparkles className="w-3.5 h-3.5 text-[#426B52] animate-spin" />
+                      <span>GoWithFlow AI Mentor is thinking...</span>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+
+                {/* Input Bar */}
+                <form
+                  onSubmit={(e) => { e.preventDefault(); handleSendChatMessage(); }}
+                  className="flex gap-2 p-2 bg-[#F6F4EF] border border-[#E5E1D8] rounded-2xl"
+                >
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ask about roadmaps, code debugging, system architecture, interview prep..."
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    disabled={chatSending}
+                    className="flex-1 px-3 py-2 bg-transparent text-xs text-[#252820] focus:outline-none disabled:opacity-60 placeholder-[#72766B]"
+                  />
+                  <button
+                    type="submit"
+                    disabled={chatSending || !chatInput.trim()}
+                    aria-label="Send message"
+                    className="px-4 py-2 bg-[#426B52] hover:bg-[#365843] text-white text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer shadow-sm"
+                  >
+                    <span>Send</span>
+                    <Send className="w-3.5 h-3.5" />
+                  </button>
+                </form>
+              </div>
+            )}
+
+            {/* VIEW 2: WEEKLY ACTION GUIDANCE */}
+            {mentorSubTab === 'RECOMMENDATIONS' && (
+              <div className="space-y-6">
+                {/* AI Attribution Disclaimer */}
+                <div className="p-4 bg-[#FFFEFC] border border-[#E5E1D8] rounded-2xl flex items-start gap-3 shadow-sm">
+                  <Info className="w-5 h-5 text-[#426B52] shrink-0 mt-0.5" />
+                  <div className="text-xs text-[#252820]/90 leading-relaxed">
+                    <strong className="font-bold text-[#252820]">AI-Generated Guidance</strong>: Recommendations are synthesized by GoWithFlow based on your enrolled coursework, roadmap milestones, and self-reported target hours. This advice is designed to assist independent study planning and does not represent official faculty evaluations.
+                  </div>
+                </div>
+
+                {/* Category Filter Pills & Dismissed Toggle */}
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                  <div className="flex flex-wrap gap-1.5">
+                    {[
+                      { id: 'ALL', label: 'All Guidance' },
+                      { id: 'GOAL', label: 'Goal Setting' },
+                      { id: 'STUDY_PLAN', label: 'Study Sessions' },
+                      { id: 'REFLECTION', label: 'Progress Reflection' },
+                      { id: 'NEXT_STEP', label: 'Next Steps' }
+                    ].map(cat => (
+                      <button
+                        key={cat.id}
+                        onClick={() => setMentorFilterCategory(cat.id)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${
+                          mentorFilterCategory === cat.id
+                            ? 'bg-[#426B52] text-white shadow-sm'
+                            : 'bg-[#FFFEFC] border border-[#E5E1D8] text-[#72766B] hover:text-[#252820] hover:bg-[#F6F4EF]'
+                        }`}
+                      >
+                        {cat.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {dismissedRecIds.length > 0 && (
+                    <button
+                      onClick={() => setShowDismissed(!showDismissed)}
+                      className="text-xs font-semibold text-[#72766B] hover:text-[#252820] flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>{showDismissed ? 'Hide dismissed' : `Show dismissed (${dismissedRecIds.length})`}</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Recommendations List */}
+                <div className="space-y-4">
+                  {mentorRecs
+                    .filter(rec => {
+                      if (mentorFilterCategory !== 'ALL' && rec.category !== mentorFilterCategory) return false;
+                      if (!showDismissed && dismissedRecIds.includes(rec.id)) return false;
+                      return true;
+                    })
+                    .map(rec => {
+                      const isDismissed = dismissedRecIds.includes(rec.id);
+                      const isAccepted = acceptedRecIds.includes(rec.id);
+
+                      const categoryColors: Record<string, { bg: string; text: string; border: string }> = {
+                        GOAL: { bg: 'bg-[#C77952]/10', text: 'text-[#C77952]', border: 'border-[#C77952]/30' },
+                        STUDY_PLAN: { bg: 'bg-[#426B52]/10', text: 'text-[#426B52]', border: 'border-[#426B52]/30' },
+                        REFLECTION: { bg: 'bg-[#A8B99A]/20', text: 'text-[#426B52]', border: 'border-[#A8B99A]/40' },
+                        NEXT_STEP: { bg: 'bg-[#252820]/10', text: 'text-[#252820]', border: 'border-[#252820]/20' }
+                      };
+                      const color = categoryColors[rec.category] || categoryColors.GOAL;
+
+                      return (
+                        <div
+                          key={rec.id}
+                          className={`bg-[#FFFEFC] border border-[#E5E1D8] rounded-2xl p-6 shadow-sm transition-all ${
+                            isDismissed ? 'opacity-60 bg-[#F6F4EF]' : ''
+                          }`}
+                        >
+                          <div className="flex flex-col sm:flex-row justify-between sm:items-start gap-3">
+                            <div className="space-y-2 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className={`text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full border ${color.bg} ${color.text} ${color.border}`}>
+                                  {rec.category.replace('_', ' ')}
+                                </span>
+                                <span className="text-[11px] font-bold text-[#72766B] flex items-center gap-1">
+                                  <Clock className="w-3 h-3" /> {rec.timeframe}
+                                </span>
+                                <span className="text-[10px] text-[#A8B99A] font-semibold bg-[#252820] px-2 py-0.5 rounded text-white">
+                                  AI Advice
+                                </span>
+                              </div>
+
+                              <h3 className="text-base font-extrabold text-[#252820]">
+                                {rec.title}
+                              </h3>
+
+                              <p className="text-xs text-[#252820]/85 leading-relaxed">
+                                {rec.description}
+                              </p>
+
+                              <div className="pt-2 flex flex-wrap items-center gap-3 text-[11px] text-[#72766B]">
+                                <span>Focus: <strong className="text-[#252820]">{rec.impactTopic}</strong></span>
+                                <span>&bull;</span>
+                                <span>{rec.confidenceNote}</span>
+                              </div>
+                            </div>
+
+                            {/* Action buttons */}
+                            <div className="flex items-center gap-2 shrink-0 pt-2 sm:pt-0">
+                              {isDismissed ? (
+                                <button
+                                  onClick={() => handleRestoreRec(rec.id)}
+                                  className="px-3 py-1.5 text-xs font-bold text-[#426B52] border border-[#426B52] hover:bg-[#426B52]/10 rounded-xl transition-colors cursor-pointer"
+                                >
+                                  Restore
+                                </button>
+                              ) : (
+                                <>
+                                  <button
+                                    onClick={() => handleAcceptRec(rec.id)}
+                                    disabled={isAccepted}
+                                    className={`px-4 py-2 text-xs font-bold rounded-xl transition-colors cursor-pointer ${
+                                      isAccepted
+                                        ? 'bg-[#A8B99A]/30 text-[#426B52] border border-[#A8B99A]'
+                                        : 'bg-[#426B52] hover:bg-[#365843] text-white shadow-sm'
+                                    }`}
+                                  >
+                                    {isAccepted ? 'Added to Study Plan ✓' : rec.suggestedAction || 'Accept into Plan'}
+                                  </button>
+                                  <button
+                                    onClick={() => handleOpenAdjust(rec)}
+                                    className="px-3 py-2 border border-[#E5E1D8] hover:bg-[#F6F4EF] text-xs font-bold text-[#252820] rounded-xl transition-colors cursor-pointer"
+                                  >
+                                    Adjust
+                                  </button>
+                                  <button
+                                    onClick={() => handleDismissRec(rec.id)}
+                                    className="px-2.5 py-2 border border-[#E5E1D8] hover:bg-[#C77952]/10 text-xs font-bold text-[#72766B] hover:text-[#C77952] rounded-xl transition-colors cursor-pointer"
+                                    title="Dismiss this guidance"
+                                  >
+                                    Dismiss
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                  {mentorRecs.filter(r => !dismissedRecIds.includes(r.id)).length === 0 && (
+                    <div className="p-10 bg-[#FFFEFC] border border-[#E5E1D8] rounded-2xl text-center space-y-3">
+                      <CheckCircle2 className="w-10 h-10 text-[#426B52] mx-auto" />
+                      <h4 className="font-extrabold text-[#252820] text-sm">All Current Recommendations Addressed</h4>
+                      <p className="text-xs text-[#72766B] max-w-md mx-auto">
+                        You have reviewed and acted on all recommendations in this cycle. Log more study hours or complete course assignments to generate new guidance.
+                      </p>
+                      <button
+                        onClick={fetchMentorData}
+                        className="px-4 py-2 bg-[#426B52] hover:bg-[#365843] text-white text-xs font-bold rounded-xl transition-colors cursor-pointer"
+                      >
+                        Re-Analyze Progress
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -3886,6 +4188,28 @@ export default function StudentDashboard() {
                                 <span className="truncate max-w-[200px]">{src.title}</span>
                                 <span className="text-[#72766B]">({src.subject})</span>
                               </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Suggestion Chips */}
+                      {m.suggestions && m.suggestions.length > 0 && (
+                        <div className="mt-3 pt-2 border-t border-[#E5E1D8] space-y-1.5">
+                          <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#72766B] block">
+                            Suggested Follow-Ups:
+                          </span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {m.suggestions.map((sug, sIdx) => (
+                              <button
+                                key={sIdx}
+                                type="button"
+                                onClick={() => handleSendChatMessage(sug)}
+                                className="px-2.5 py-1 bg-[#FFFEFC] hover:bg-[#F6F4EF] border border-[#E5E1D8] hover:border-[#426B52] rounded-lg text-[10px] font-semibold text-[#252820] text-left transition-colors flex items-center gap-1 group cursor-pointer"
+                              >
+                                <span className="truncate max-w-[240px]">{sug}</span>
+                                <ChevronRight className="w-3 h-3 text-[#72766B] group-hover:text-[#426B52] shrink-0" />
+                              </button>
                             ))}
                           </div>
                         </div>
