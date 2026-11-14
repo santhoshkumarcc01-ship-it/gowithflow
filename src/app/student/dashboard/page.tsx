@@ -2362,8 +2362,7 @@ export default function StudentDashboard() {
                     </button>
                   </div>
                 </div>
-              ))
-            }
+              )))}
             </div>
           </div>
         )}
@@ -2764,8 +2763,7 @@ export default function StudentDashboard() {
                     </div>
                   </div>
                 </div>
-              ))
-            }
+              )))}
             </div>
 
             {/* Recommended Learning Resources */}
