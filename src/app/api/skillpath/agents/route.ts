@@ -199,7 +199,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, data: outputData });
   } catch (error: any) {
-    console.error('[SkillPath Agent Error]:', error);
+    console.error('[GoWithFlow Agent Error]:', error);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }

@@ -258,7 +258,7 @@ export async function GET(req: NextRequest) {
       }
     });
   } catch (error: any) {
-    console.error('[SkillPath Overview Error]:', error);
+    console.error('[GoWithFlow Overview Error]:', error);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }
