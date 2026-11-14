@@ -46,6 +46,7 @@ export class ConversationService {
     // Create a new conversation
     return prisma.conversation.create({
       data: {
+        ...(conversationId && conversationId !== 'latest' ? { id: conversationId } : {}),
         userId,
         title: initialTitle || 'Career & Learning Chat',
         agentType: 'AI_MENTOR'

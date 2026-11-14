@@ -2,7 +2,6 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const apiKey = process.env.GEMINI_API_KEY || process.env.AI_API_KEY || '';
 const PRIMARY_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
-const FALLBACK_MODEL = 'gemini-3.5-flash-lite';
 const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
 
 export type AIIntent =
@@ -114,6 +113,62 @@ export interface MentorChatResult {
 
 export class AIService {
   /**
+   * Resilient content generator that attempts primary model, then fallbacks, before failing.
+   */
+  static async generateWithFallback(
+    prompt: string,
+    options?: { systemInstruction?: string }
+  ): Promise<string | null> {
+    if (!genAI) return null;
+    const modelsToTry = Array.from(new Set([PRIMARY_MODEL, 'gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest']));
+    for (const modelName of modelsToTry) {
+      try {
+        const model = genAI.getGenerativeModel({
+          model: modelName,
+          ...(options?.systemInstruction ? { systemInstruction: options.systemInstruction } : {})
+        });
+        const res = await model.generateContent(prompt);
+        const text = res.response.text().trim();
+        if (text) return text;
+      } catch (err) {
+        console.warn(`[AI] Model ${modelName} call failed, trying next option:`, err);
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Transforms raw message history into clean, strictly alternating turns for the native Gemini Chat Model API.
+   */
+  static buildGeminiChatHistory(
+    rawHistory: Array<{ role: string; content?: string; text?: string }>
+  ): Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> {
+    const result: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
+    let expectedRole: 'user' | 'model' = 'user';
+
+    for (const item of rawHistory) {
+      const rawRole = item.role === 'model' || item.role === 'assistant' ? 'model' : 'user';
+      const text = (item.content || item.text || '').replace(/<!--META:[\s\S]*?-->/g, '').trim();
+      if (!text) continue;
+
+      if (rawRole === expectedRole) {
+        result.push({ role: rawRole, parts: [{ text }] });
+        expectedRole = expectedRole === 'user' ? 'model' : 'user';
+      } else if (result.length > 0 && result[result.length - 1].role === rawRole) {
+        result[result.length - 1].parts[0].text += '\n\n' + text;
+      }
+    }
+
+    // The chat session requires that the last item in history is from 'model'
+    // so that the upcoming sendMessage from the learner is the next 'user' turn.
+    if (result.length > 0 && result[result.length - 1].role === 'user') {
+      result.pop();
+    }
+
+    return result;
+  }
+
+  /**
    * Fast, resilient heuristic intent classifier
    */
   static classifyIntent(
@@ -211,7 +266,7 @@ export class AIService {
 
   /**
    * Primary Conversational AI Mentor Engine
-   * Intelligently routes, prompts Gemini 3.5, and generates rich contextual responses with 0 errors.
+   * Powered by official Gemini Chat Model API (model.startChat) with real-time multi-turn context.
    */
   static async processMentorMessage(params: {
     userId: string;
@@ -235,12 +290,11 @@ export class AIService {
       ? context.materials.map(m => `• ${m.title} (${m.subject}) [${m.category}]`).join('\n')
       : 'No campus materials uploaded yet.';
 
-    // Try Gemini Real-Time Generation
+    // Try Gemini Real-Time Generation via Official Chat Model API
     if (genAI) {
       const modelsToTry = Array.from(new Set([PRIMARY_MODEL, 'gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest']));
       for (const modelName of modelsToTry) {
         try {
-          const model = genAI.getGenerativeModel({ model: modelName });
           const systemPrompt = `
 You are the GoWithFlow AI Mentor, the core conversational intelligence of the GoWithFlow career intelligence platform.
 Find Your Direction. Grow With Flow.
@@ -274,24 +328,26 @@ BEHAVIORAL PRINCIPLES:
    <!--META:{"intent":"${classifiedIntent}","suggestions":["Suggestion 1?","Suggestion 2?","Suggestion 3?"]}-->
 `;
 
-          // Format recent history (up to last 6 turns)
-          const historyFormatted = history.slice(-6).map(h => {
-            const role = h.role === 'user' ? 'Learner' : 'AI Mentor';
-            const text = h.content || h.text || '';
-            // Strip any previous META tags from history
-            return `${role}: ${text.replace(/<!--META:[\s\S]*?-->/g, '').trim()}`;
-          }).join('\n\n');
+          const model = genAI.getGenerativeModel({
+            model: modelName,
+            systemInstruction: systemPrompt
+          });
 
-          const userPrompt = historyFormatted 
-            ? `${historyFormatted}\n\nLearner: ${message}\n\nAI Mentor:`
-            : `Learner: ${message}\n\nAI Mentor:`;
+          // Build clean alternating history for native Gemini Chat Model
+          const cleanHistory = AIService.buildGeminiChatHistory(history.slice(-10));
 
-          const response = await model.generateContent([
-            { text: systemPrompt },
-            { text: userPrompt }
-          ]);
+          const chatSession = model.startChat({
+            history: cleanHistory,
+            generationConfig: {
+              temperature: 0.7,
+              topP: 0.95,
+              maxOutputTokens: 2048
+            }
+          });
 
+          const response = await chatSession.sendMessage(message);
           const rawReply = response.response.text().trim();
+
           if (rawReply) {
             let cleanReply = rawReply;
             let intent: AIIntent = classifiedIntent;
@@ -339,7 +395,7 @@ BEHAVIORAL PRINCIPLES:
             };
           }
         } catch (apiErr) {
-          console.warn(`[AI] Model ${modelName} call failed, trying next option:`, apiErr);
+          console.warn(`[AI] Chat Model ${modelName} call failed, trying next option:`, apiErr);
         }
       }
     }
@@ -552,33 +608,31 @@ BEHAVIORAL PRINCIPLES:
   ): Promise<AIServiceResponse> {
     const skillsString = currentSkills.join(', ');
 
-    if (genAI) {
-      try {
-        const model = genAI.getGenerativeModel({ model: PRIMARY_MODEL });
-        const prompt = `
-          You are an expert AI Career Advisor at a premium university.
-          Generate a detailed career roadmap for a student with:
-          - Target Role: "${targetRole}"
-          - Current Skills: "${skillsString}"
-          - Department: "${departmentName}"
-          - Year of Study: ${year}
+    const prompt = `
+      You are an expert AI Career Advisor at a premium university.
+      Generate a detailed career roadmap for a student with:
+      - Target Role: "${targetRole}"
+      - Current Skills: "${skillsString}"
+      - Department: "${departmentName}"
+      - Year of Study: ${year}
 
-          Respond STRICTLY with a valid JSON object. Do not include markdown code block formatting (like \`\`\`json). The JSON must look like this:
-          {
-            "roadmap": [
-              { "id": 1, "title": "Skill/Topic name", "desc": "Short description of what to study", "status": "NOT_STARTED" }
-            ],
-            "skillsToLearn": ["Skill 1", "Skill 2"],
-            "recommendations": ["Recommendation 1", "Recommendation 2"],
-            "projects": ["Project 1", "Project 2"]
-          }
-          Provide exactly 4-5 roadmap steps.
-        `;
+      Respond STRICTLY with a valid JSON object. Do not include markdown code block formatting (like \`\`\`json). The JSON must look like this:
+      {
+        "roadmap": [
+          { "id": 1, "title": "Skill/Topic name", "desc": "Short description of what to study", "status": "NOT_STARTED" }
+        ],
+        "skillsToLearn": ["Skill 1", "Skill 2"],
+        "recommendations": ["Recommendation 1", "Recommendation 2"],
+        "projects": ["Project 1", "Project 2"]
+      }
+      Provide exactly 4-5 roadmap steps.
+    `;
 
-        const result = await model.generateContent(prompt);
-        const text = result.response.text().trim();
-        const jsonMatch = text.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
+    const raw = await this.generateWithFallback(prompt);
+    if (raw) {
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
           const parsed = JSON.parse(jsonMatch[0]);
           if (parsed.roadmap && parsed.skillsToLearn && parsed.recommendations) {
             parsed.roadmap = parsed.roadmap.map((step: any, idx: number) => ({
@@ -589,9 +643,9 @@ BEHAVIORAL PRINCIPLES:
             }));
             return parsed;
           }
+        } catch {
+          // Fall through to mock
         }
-      } catch (error) {
-        console.warn('[AI] Gemini generateContent failed, falling back to rule-based engine:', error);
       }
     }
 
@@ -608,28 +662,21 @@ BEHAVIORAL PRINCIPLES:
       targetRole: string;
     }
   ): Promise<string> {
-    if (genAI) {
-      try {
-        const model = genAI.getGenerativeModel({ model: PRIMARY_MODEL });
-        const prompt = `
-          You are the AI Campus OS Companion.
-          Student Name: ${context.studentName}
-          Department: ${context.department}
-          Overall Attendance Rate: ${context.attendancePercentage}%
-          Pending Homework Tasks: ${context.pendingAssignments}
-          Target Career Goal: ${context.targetRole || 'Not specified'}
+    const prompt = `
+      You are the AI Campus OS Companion.
+      Student Name: ${context.studentName}
+      Department: ${context.department}
+      Overall Attendance Rate: ${context.attendancePercentage}%
+      Pending Homework Tasks: ${context.pendingAssignments}
+      Target Career Goal: ${context.targetRole || 'Not specified'}
 
-          Student is asking: "${userMessage}"
+      Student is asking: "${userMessage}"
 
-          Respond in a helpful, concise tone (max 4 sentences). Reference their stats if relevant (e.g. attendance below 75% triggers a warning). Keep it professional.
-        `;
+      Respond in a helpful, concise tone (max 4 sentences). Reference their stats if relevant (e.g. attendance below 75% triggers a warning). Keep it professional.
+    `;
 
-        const result = await model.generateContent(prompt);
-        return result.response.text().trim();
-      } catch (error) {
-        console.warn('[AI] Gemini chatbot chat failed, using fallback responses:', error);
-      }
-    }
+    const raw = await this.generateWithFallback(prompt);
+    if (raw) return raw;
 
     const msg = userMessage.toLowerCase();
     if (msg.includes('attendance')) {
@@ -658,10 +705,7 @@ BEHAVIORAL PRINCIPLES:
       enrolledSubjects: string[];
     }
   ): Promise<MentorRecommendation[]> {
-    if (genAI) {
-      try {
-        const model = genAI.getGenerativeModel({ model: PRIMARY_MODEL });
-        const prompt = `
+    const prompt = `
 You are an expert AI Academic & Career Mentor.
 Generate 4 tailored, non-judgmental recommendations for:
 - Student: ${context.studentName} (${context.department})
@@ -694,10 +738,11 @@ Format:
 ]
 `;
 
-        const result = await model.generateContent(prompt);
-        const text = result.response.text().trim();
-        const jsonMatch = text.match(/\[[\s\S]*\]/);
-        if (jsonMatch) {
+    const raw = await this.generateWithFallback(prompt);
+    if (raw) {
+      const jsonMatch = raw.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        try {
           const parsed = JSON.parse(jsonMatch[0]);
           if (Array.isArray(parsed) && parsed.length >= 3) {
             return parsed.map((item, idx) => ({
@@ -712,9 +757,9 @@ Format:
               confidenceNote: item.confidenceNote || 'Synthesized from your active roadmap and coursework stats.'
             }));
           }
+        } catch {
+          // Fall through to deterministic
         }
-      } catch (err) {
-        console.warn('[AI] Gemini mentor generation failed, falling back to deterministic recommendations:', err);
       }
     }
 
@@ -795,10 +840,7 @@ Format:
       skills: string[];
     }>;
   }> {
-    if (genAI) {
-      try {
-        const model = genAI.getGenerativeModel({ model: PRIMARY_MODEL });
-        const prompt = `
+    const prompt = `
 You are the GoWithFlow Learning Pathway Agent, a senior tech career architect.
 Analyze this learner's profile against their target industry role:
 
@@ -838,10 +880,11 @@ Return STRICTLY a valid JSON object without surrounding markdown code block fenc
 }
 `;
 
-        const result = await model.generateContent(prompt);
-        const text = result.response.text().trim();
-        const jsonMatch = text.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
+    const raw = await this.generateWithFallback(prompt);
+    if (raw) {
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
           const parsed = JSON.parse(jsonMatch[0]);
           if (parsed && Array.isArray(parsed.missingSkills)) {
             return {
@@ -869,9 +912,9 @@ Return STRICTLY a valid JSON object without surrounding markdown code block fenc
                   ]
             };
           }
+        } catch {
+          // Fall through to deterministic
         }
-      } catch (err) {
-        console.warn('[AI] Gemini suggestion agent failed, using rule-based analysis:', err);
       }
     }
 
@@ -930,10 +973,7 @@ Return STRICTLY a valid JSON object without surrounding markdown code block fenc
     weaknesses: string[];
     improvementPlan: string[];
   }> {
-    if (genAI) {
-      try {
-        const model = genAI.getGenerativeModel({ model: PRIMARY_MODEL });
-        const prompt = `
+    const prompt = `
 You are the GoWithFlow Career Evaluation Agent.
 Perform a rigorous, fair, and encouraging assessment of this learner for the role of "${context.targetRole}":
 
@@ -982,10 +1022,11 @@ Return STRICTLY a JSON object without surrounding markdown code block fences:
 }
 `;
 
-        const result = await model.generateContent(prompt);
-        const text = result.response.text().trim();
-        const jsonMatch = text.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
+    const raw = await this.generateWithFallback(prompt);
+    if (raw) {
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
           const parsed = JSON.parse(jsonMatch[0]);
           if (parsed && typeof parsed.overallScore === 'number') {
             return {
@@ -1001,9 +1042,9 @@ Return STRICTLY a JSON object without surrounding markdown code block fences:
               improvementPlan: Array.isArray(parsed.improvementPlan) ? parsed.improvementPlan : ['Build and deploy an end-to-end project', 'Earn a verified certification', 'Complete technical assessments']
             };
           }
+        } catch {
+          // Fall through to deterministic
         }
-      } catch (err) {
-        console.warn('[AI] Gemini scoring agent failed, using baseline evaluator:', err);
       }
     }
 

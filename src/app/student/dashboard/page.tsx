@@ -136,6 +136,14 @@ export default function StudentDashboard() {
   const [chatSending, setChatSending] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [lastFailedPrompt, setLastFailedPrompt] = useState<string | null>(null);
+  const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const drawerChatEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    drawerChatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatMessages, chatSending, chatOpen]);
 
   // Coordinated Feature 2: AI Mentor State
   const [mentorRecs, setMentorRecs] = useState<any[]>([]);
@@ -200,12 +208,16 @@ export default function StudentDashboard() {
                     onClick={() => {
                       if (typeof navigator !== 'undefined' && navigator.clipboard) {
                         navigator.clipboard.writeText(seg.content);
+                        setCopiedCodeId(`code-${sIdx}`);
+                        setTimeout(() => setCopiedCodeId(null), 2000);
                       }
                     }}
-                    className="hover:text-white transition-colors cursor-pointer"
+                    className={`transition-colors cursor-pointer font-bold ${
+                      copiedCodeId === `code-${sIdx}` ? 'text-[#426B52]' : 'hover:text-white'
+                    }`}
                     title="Copy code"
                   >
-                    Copy
+                    {copiedCodeId === `code-${sIdx}` ? 'Copied! ✓' : 'Copy'}
                   </button>
                 </div>
                 <pre className="p-3 text-[11px] font-mono text-[#E5E1D8] overflow-x-auto whitespace-pre leading-relaxed">
@@ -2255,6 +2267,7 @@ export default function StudentDashboard() {
                       <span>GoWithFlow AI Mentor is thinking...</span>
                     </div>
                   )}
+                  <div ref={chatEndRef} />
                 </div>
 
                 {/* Input Bar */}
@@ -4241,6 +4254,7 @@ export default function StudentDashboard() {
                   <span>Assistant is analyzing course materials & schedule...</span>
                 </div>
               )}
+              <div ref={drawerChatEndRef} />
             </div>
 
             {/* Input Form */}
